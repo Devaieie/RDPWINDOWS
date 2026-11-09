@@ -1,4 +1,4 @@
-name: RDP
+name: win2025RDP
 
 on:
   workflow_dispatch:
@@ -29,22 +29,24 @@ jobs:
           # (Optional) Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User with Fixed Password
+      - name: Set Universal Password (admin123) for Users
         run: |
           $password = "admin123"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          # 1. Update or create the 'RDP' custom user
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+              New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -PasswordNeverExpires $true
+          } else {
+              Set-LocalUser -Name "RDP" -Password $securePass
           }
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-         
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
+
+          # 2. Force the built-in Administrator account password to admin123
+          net user Administrator $password
+
           echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
-         
-          if (-not (Get-LocalUser -Name "RDP")) {
-              Write-Error "User creation failed"
-              exit 1
-          }
 
       - name: Install Tailscale
         run: |
@@ -91,8 +93,8 @@ jobs:
         run: |
           Write-Host "`n=== RDP ACCESS ==="
           Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "Username: RDP (or Administrator)"
+          Write-Host "Password: admin123"
           Write-Host "==================`n"
 
           $rdpProfile = "C:\Users\RDP"
