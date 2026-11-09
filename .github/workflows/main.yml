@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
@@ -28,6 +28,10 @@ jobs:
 
           # Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
+
+          # Verification: Confirm TermService is running and rule is applied
+          Get-Service TermService
+          Get-NetFirewallRule -Name "RDP-Tailscale"
 
       - name: Create RDP User with Fixed Password
         run: |
@@ -46,14 +50,37 @@ jobs:
               exit 1
           }
 
+          # Verification: Ensure local user exists and belongs to Administrators
+          Get-LocalUser -Name "RDP"
+          Get-LocalGroupMember -Group "Administrators" | Where-Object Name -like "*RDP*"
+
       - name: Install Tailscale
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-amd64.msi"
+          Write-Host "Fetching latest stable Tailscale MSI release URL..."
+          $releasePage = Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/" -UseBasicParsing
+          $match = [regex]::Match($releasePage.Content, 'href="(tailscale-setup-([\d\.]+)-amd64\.msi)"')
+          
+          if (-not $match.Success) {
+              Write-Error "Failed to parse Tailscale stable MSI version from package index."
+              exit 1
+          }
+          
+          $msiFileName = $match.Groups[1].Value
+          $tsUrl = "https://pkgs.tailscale.com/stable/$msiFileName"
           $installerPath = "$env:TEMP\tailscale.msi"
          
+          Write-Host "Downloading Tailscale from: $tsUrl"
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
+
+          # Verification: Check if Tailscale binary exists
+          if (Test-Path "$env:ProgramFiles\Tailscale\tailscale.exe") {
+              Write-Host "Tailscale installed successfully!"
+          } else {
+              Write-Error "Tailscale installation path not found."
+              exit 1
+          }
 
       - name: Establish Tailscale Connection
         run: |
@@ -74,7 +101,8 @@ jobs:
               exit 1
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-     
+          Write-Host "Assigned Tailscale IP: $tsIP"
+
       - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
